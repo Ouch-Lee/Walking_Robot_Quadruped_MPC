@@ -3,7 +3,7 @@ import pybullet as p
 import pybullet_data as pyd
 import numpy as np
 import matplotlib.pyplot as plt
-
+import Planner as pl
 
 
 
@@ -32,6 +32,7 @@ class QuadrupedSim(object):
         self.FL_leg = [4, 5, 6]
         self.RR_leg = [8, 9, 10]
         self.RL_leg = [12, 13, 14]
+
 
 
         self.torso_ID = -1
@@ -207,7 +208,7 @@ class QuadrupedSim(object):
             [swing_x, y1, swing_z] = pl.trot_traj_plan_swing(t)
             [support_x, y2, support_z] = pl.trot_traj_plan_support(t)
             # change phase when a period T has passed, start with fl and hr to be swing phase
-            phase = t // T % 2
+            phase = t // pl.T % 2
             fl_hr_x = swing_x if phase == 0 else support_x
             fl_hr_z = swing_z if phase == 0 else support_z
             fr_hl_x = support_x if phase == 0 else swing_x
@@ -222,9 +223,9 @@ class QuadrupedSim(object):
             for _i in range(4):
                 q_4.append([q_list[_i * 3], q_list[_i * 3 + 1], q_list[_i * 3 + 2]])
             # torque = self.joint_controller(q_4)
-            torque = np.zeros(12)
-            tmp_tau = np.sin(2*np.pi*t / (40 * dt))
-            torque[2] = tmp_tau * 200
+            # torque = np.zeros(12)
+            # tmp_tau = np.sin(2*np.pi*t / (40 * dt))
+            # torque[2] = tmp_tau * 200
             # for i in range(4):
             #     torque[3*i + 1] = 100
 
@@ -248,8 +249,6 @@ class QuadrupedSim(object):
             self.update_base_pos_ori()
             _t += dt
             _, _, d_z = planner.stand_up_traj(stand_height, init_height, _t, stand_T)
-            # test_dz.append(d_z)
-            # test_z.append(self.base_position[2])
             # the calculate get a
             q_in_shoulder = [[0, 0, d_z]] * 4
             q_4_list = self.IK_cal3(q_in_shoulder)
@@ -467,94 +466,3 @@ class QuadrupedSim(object):
 
     def close_sim(self):
         p.disconnect(self.physicsClient)
-
-class Planner:
-    '''
-    this class calculate the position for toes in base coordinate
-    '''
-
-    # def __init__(self, step_size, step_height, T):
-    #     self.S = step_size
-    #     self.H = step_height
-    #     self.T = T
-    plot_test = np.zeros(200)
-
-    def __init__(self):
-        self.S = None
-        self.H = None
-        self.T = None
-
-    def init_trot_params(self, step_size, step_height, T):
-        self.S = step_size
-        self.H = step_height
-        self.T = T
-
-    def trot_traj_plan_swing(self, t):
-        """
-        plan a 'Compound cycloidal trajectories'
-        refer to https://blog.csdn.net/weixin_41045354/article/details/105219092
-        During T/2: swing phase
-        During T/2 ~ T: support phase
-
-        :param S: step length
-        :param T: period
-        :param H: leg raise height
-        :return: a vec3 list (arr)
-        """
-
-        t = t % self.T if t > self.T else t  # TODO, strange?
-        x = self.S * (t / self.T - np.sin(2 * np.pi * t / self.T) / (2 * np.pi)) #- self.S / 2
-        fE = t / self.T - np.sin(4 * np.pi * t / self.T) / (4 * np.pi)
-        z = self.H * (np.sign(self.T / 2 - t) * (2 * fE - 1) + 1)
-        y = 0
-        return [x, y, z]
-
-
-    def trot_traj_plan_support(self, t):
-        t = t % self.T if t > self.T else t
-        x = self.S * ((2 * self.T - t) / self.T + np.sin(2 * np.pi * t / self.T) / (2 * np.pi) - 1) #- self.S / 2
-        z = 0
-        y = 0
-        return [x, y, z]
-
-    def stand_up_traj(self, stand_height, init_height, t, stand_T):
-        z = - (stand_height - init_height) / 2 * np.sin(2 * np.pi / stand_T * t - np.pi / 2) - (
-                stand_height - init_height) / 2 - init_height
-        x = y = 0
-        return [x, y, z]
-
-    def traj_2_base(self, traj):
-        '''
-
-        :param traj: this param is 4x3 list calculated in previous trajectory planner
-        :return: 4x3 list, the position for traj in base coordinate
-        '''
-        # print('height caled by planner:', traj[0][2])
-        self.plot_test[:-1] = self.plot_test[1:]
-        self.plot_test[-1] = traj[0][2]
-        dz = -0.25  # if dz = z for base position , the toe will always on plane
-        leg_xy_offset = [[0.19, -0.11, dz], [0.19, 0.11, dz], [-0.19, -0.11, dz],
-                         [-0.19, 0.11, dz]]
-        p_in_base = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
-        for i in range(4):
-            for j in range(3):
-                p_in_base[i][j] = traj[i][j] + leg_xy_offset[i][j]
-        # print('height in body coord:', p_in_base[0][2])
-        return p_in_base
-
-
-
-
-if __name__ == '__main__':
-    qs = QuadrupedSim(start_sim=True)
-    test_x_list = []
-    test_z_list = []
-    test_z = []
-    test_dz = []
-    t_test = 0
-
-    T = 0.1 # simu step dt = 0.005, so T should higher than 0.2
-    pl = Planner()
-    pl.init_trot_params(0.06, 0.12, T)
-    qs.run(pl)
-
