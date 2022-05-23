@@ -18,7 +18,7 @@ class QuadrupedSim(object):
         p.setAdditionalSearchPath(pyd.getDataPath())
         self.floor = p.loadURDF('plane.urdf')
         startPos = [0, 0, 0.2]  # float and fixed in air
-        self.robot = p.loadURDF('mini_cheetah/mini_cheetah.urdf', startPos)
+        self.robot = p.loadURDF('mini_cheetah2.urdf', startPos)
 
         self.n_j = 12
         self.simu_f = 200
@@ -59,7 +59,7 @@ class QuadrupedSim(object):
         if set_color: self.color_links()
         if set_sliders: self.add_custom_sliders()  # add sliders for debug use
         self.init_leg_states = [0, -1.5, 2.4]  # initialize a state for standing
-        self.init_sim_states()
+        # self.init_sim_states()
         self.camera_sliders = []
         if set_cameras: self.add_camera_sliders()  # adjust [pitch, yaw] for now
         self.trot_phase = 0  # 0 is when fl and hr are in swing ([1, 0, 0, 1]), 1 is otherwise ([0, 1, 1, 0])
@@ -186,10 +186,16 @@ class QuadrupedSim(object):
         simulation_times = 5000
         times_cnt = 0
         t = 0
+        for j in range(12):
+            # Disable motor in order to use direct torque control.
+            info = p.getJointInfo(self.robot, self.joints[j])
+            print(info)
+
 
         while times_cnt < 50:
             self.update_base_pos_ori()
             self.update_camera_vision()
+            self.q_vec, self.dq_vec = self.get_joint_states()
             p.stepSimulation()
             self.plot_mat[:-1, 0] = self.plot_mat[1:, 0]  # update_body position
             self.plot_mat[-1, 0] = self.base_position[2]
@@ -197,11 +203,9 @@ class QuadrupedSim(object):
             times_cnt += 1
 
         self.stand_up(dt, pl)
+        self.init_motor()
 
         while times_cnt < simulation_times:
-            # this is test for getJointInfo function
-            # _, _, _, _, _, _,_,_,_,_,_,_,_,_, toe_p ,_, _, = p.getJointInfo(self.robot, 7)
-            # print("the toe height: ", toe_p)
             t = t + dt
             # print("current t :", t)
             self.update_camera_vision()
@@ -215,31 +219,25 @@ class QuadrupedSim(object):
             fr_hl_z = support_z if phase == 0 else swing_z
             # get the q_d_vec in 3x4 form
             p_by_traj = [[fl_hr_x, 0, fl_hr_z], [fr_hl_x, 0, fr_hl_z], [fr_hl_x, 0, fr_hl_z], [fl_hr_x, 0, fl_hr_z]]
-            p_in_base = pl.traj_2_base(p_by_traj)
+            p_in_base = pl.traj_2_base(p_by_traj, 0.25)
             p_in_cauchy = self.base_2_cauchy(p_in_base)
             self.planner_plot = pl.plot_test
             q_list = p.calculateInverseKinematics2(self.robot, self.toe_link_IDs, p_in_cauchy)  # the target position for each joints in 12xx1
             q_4 = []
             for _i in range(4):
                 q_4.append([q_list[_i * 3], q_list[_i * 3 + 1], q_list[_i * 3 + 2]])
-            # torque = self.joint_controller(q_4)
+            torque = self.joint_controller(q_4)
             # torque = np.zeros(12)
             # tmp_tau = np.sin(2*np.pi*t / (40 * dt))
-            # torque[2] = tmp_tau * 200
-            # for i in range(4):
-            #     torque[3*i + 1] = 100
-
-            # self.step2(torque)
-            self.step(q_4, 0)
+            # torque[2] =  200 #* tmp_tau
+            self.step2(torque)
+            # self.step(q_4, 0)
             # if 0 == times_cnt % 20:
             #     self.update_plot()
             times_cnt += 1
             time.sleep(1 / self.simu_f)
         self.close_sim()
 
-
-
-        pass # TODO
 
     def stand_up(self, dt, planner, stand_height=0.25, init_height=0.1265, stand_T=0.5):
         _time_cnt = 0
@@ -249,10 +247,16 @@ class QuadrupedSim(object):
             self.update_base_pos_ori()
             _t += dt
             _, _, d_z = planner.stand_up_traj(stand_height, init_height, _t, stand_T)
-            # the calculate get a
             q_in_shoulder = [[0, 0, d_z]] * 4
-            q_4_list = self.IK_cal3(q_in_shoulder)
-            self.set_motor_pos_and_vel(q_4_list, 0)
+            q_in_base = planner.traj_2_base(q_in_shoulder, 0.1265)
+            q_4_list = self.base_2_cauchy(q_in_base)
+            q_vec = p.calculateInverseKinematics2(self.robot, self.toe_link_IDs, q_4_list)
+            q_4 = []
+            for _i in range(4):
+                q_4.append([q_vec[_i * 3], q_vec[_i * 3 + 1], q_vec[_i * 3 + 2]])
+            # torque = self.joint_controller(q_4)
+            # self.step2(torque)
+            self.step(q_4, 0)
 
             ## update q and v for joints
             self.q_vec, self.dq_vec = self.get_joint_states()
@@ -263,6 +267,11 @@ class QuadrupedSim(object):
         self.base_position = p.getBasePositionAndOrientation(self.robot)[0]
         self.base_orientation = p.getBasePositionAndOrientation(self.robot)[1]
 
+    def init_motor(self):
+        maxForce = 0
+        mode = p.VELOCITY_CONTROL
+        for i in range(12):
+            p.setJointMotorControl2(self.robot, self.joints[i], controlMode=mode, force = maxForce)
 
     def set_motor_pos_and_vel(self, q_d_vec, dq_d_vec):
         """
@@ -371,17 +380,6 @@ class QuadrupedSim(object):
             self.pre_trot_phase = self.trot_phase
             self.swing_phase_cnt += 1
 
-    def cal_q_d_vec_and_d_q_d_vec(self,q_d_vec):
-        q_d_vec_tmp = np.zeros(12)
-        for i_ in range(4):
-            for j_ in range(3):
-                q_d_vec_tmp[3 * i_ + j_] = q_d_vec[i_][j_]
-        # print(q_d_vec)
-        # print("----")
-        # print(q_d_vec_tmp)
-        dq_d_vec = np.r_[q_d_vec_tmp - self.q_vec] * self.simu_f
-        return q_d_vec_tmp, dq_d_vec
-
 
     def joint_controller(self, q_d_vec):
         '''
@@ -404,20 +402,13 @@ class QuadrupedSim(object):
         return self.joint_impedance_controller(self.q_vec, self.dq_vec, q_d_vec_tmp, dq_d_vec)
 
     def joint_impedance_controller(self, q_vec, dq_vec, q_d_vec, dq_d_vec):
-        k = 150
-        b = 5
+        k = 12.5
+        b = 1.25
         torque_array = k * (q_d_vec - q_vec) + b * (dq_d_vec - dq_vec)
         print("torque:",torque_array)
         print("--------")
         return torque_array
 
-    def joint_planner(self):
-        """
-        calculate positions of each joint, then use IK_cal2 to calculate joint q_d_vec. dq_d_vec could be calculated by (q_d_vec - q_d_vec_pre) / dt
-        :return:
-        """
-
-        pass
 
     def plot_test(self):
         '''
