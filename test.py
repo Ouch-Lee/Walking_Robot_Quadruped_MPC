@@ -229,24 +229,11 @@ class QuadrupedSim(object):
             q_4 = []
             for _i in range(4):
                 q_4.append([q_list[_i * 3], q_list[_i * 3 + 1], q_list[_i * 3 + 2]])
-
-
             torque = self.joint_controller(q_4)
-            # torque_array = np.zeros(12)
-            # torque_array[2] = 50
-            # tmp_tau = np.sin(2*np.pi*t / (40 * dt))
-            # torque[1] = 200 # * tmp_tau
-            # for i in range(4):
-            #     torque[3*i + 1] = 100
-
             self.step2(torque)
-            # self.step(q_4, 0)
-            # times_cnt += 1
-            # if 200 < times_cnt < 220:
-            #     p.setJointMotorControl2(self.robot, 0, p.TORQUE_CONTROL, force = 250)
+            Jacobian = self.ComputeJacobian(0)
             # if 0 == times_cnt % 20:
             #     self.update_plot()
-
             time.sleep(1 / self.simu_f )
 
 
@@ -268,9 +255,6 @@ class QuadrupedSim(object):
             q_4 = []
             for _i in range(4):
                 q_4.append([q_vec[_i * 3], q_vec[_i * 3 + 1], q_vec[_i * 3 + 2]])
-            # torque = self.joint_controller(q_4)
-            # torque_array = np.zeros(12)
-            # torque_array[2] = 50
             # self.set_motor_pos_and_vel(q_4, 0)
             # self.step2(torque)
             self.step(q_4, 0)
@@ -315,14 +299,6 @@ class QuadrupedSim(object):
         maxForce = p.readUserDebugParameter(self.maxForceId)
         if torque_array is None:
             torque_array = np.zeros(self.n_j)
-        # p.setJointMotorControlArray(self.robot, jointIndices=self.FR_leg, controlMode = p.TORQUE_CONTROL,
-        #                             forces=torque_array[0])
-        # p.setJointMotorControlArray(self.robot, jointIndices=self.FL_leg, controlMode=p.TORQUE_CONTROL,
-        #                             forces=torque_array[1])
-        # p.setJointMotorControlArray(self.robot, jointIndices=self.RR_leg, controlMode=p.TORQUE_CONTROL,
-        #                             forces=torque_array[2])
-        # p.setJointMotorControlArray(self.robot, jointIndices=self.RL_leg, controlMode=p.TORQUE_CONTROL,
-        #                             forces=torque_array[3])
         for j in range(12):
             p.setJointMotorControl2(self.robot, self.joints[j], p.TORQUE_CONTROL, force=torque_array[j], positionGain = 0, velocityGain = 0)
 
@@ -439,14 +415,56 @@ class QuadrupedSim(object):
         print("--------")
         return torque_array
 
-    def joint_planner(self):
-        """
-        calculate positions of each joint, then use IK_cal2 to calculate joint q_d_vec. dq_d_vec could be calculated by (q_d_vec - q_d_vec_pre) / dt
-        :return:
-        """
+########################### MPC #######################
 
-        pass
+    def compute_jacobian(self, robot, link_id):
+        """Computes the Jacobian matrix for the given link.
 
+        Args:
+          robot: A robot instance.
+          link_id: The link id as returned from loadURDF.
+
+        Returns:
+          The 3 x N transposed Jacobian matrix. where N is the total DoFs of the
+          robot. For a quadruped, the first 6 columns of the matrix corresponds to
+          the CoM translation and rotation. The columns corresponds to a leg can be
+          extracted with indices [6 + leg_id * 3: 6 + leg_id * 3 + 3].
+        """
+        all_joint_angles = self.q_vec
+        zero_vec = [0] * len(all_joint_angles)
+        # it's different from discirbtion in guide
+        jv, _ = p.calculateJacobian(robot, link_id,
+                                                       (0, 0, 0), all_joint_angles,
+                                                       zero_vec, zero_vec)
+        jacobian = np.array(jv)
+        assert jacobian.shape[0] == 3
+        print('the Jacobian Matrix:')
+        return jacobian
+
+
+    def ComputeJacobian(self, leg_id):
+        """Compute the Jacobian for a given leg."""
+        # Does not work for Minitaur which has the four bar mechanism for now.
+        assert len(self.toe_link_IDs) == 4 # 如果不满足这个报错，就是
+        return self.compute_jacobian(
+            robot=self.robot,
+            link_id=self.toe_link_IDs[leg_id],
+        )
+
+    def MapContactForceToJointTorques(self, leg_id, contact_force):
+        """Maps the foot contact force to the leg joint torques."""
+        jv = self.ComputeJacobian(leg_id)  # 计算目标控制腿的雅可比矩阵
+        all_motor_torques = np.matmul(contact_force, jv)  # 是不是少了一个R？
+        motor_torques = {}
+        motors_per_leg = self.num_motors // self.num_legs
+        # 将计算得到的力矩传给关节
+        com_dof = 6
+        for joint_id in range(leg_id * motors_per_leg,
+                              (leg_id + 1) * motors_per_leg):
+            motor_torques[joint_id] = all_motor_torques[
+                                          com_dof + joint_id] * self._motor_direction[joint_id]
+
+        return motor_torques
     def plot_test(self):
         '''
         this function is used to plot important para for debugging

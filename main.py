@@ -9,7 +9,7 @@ import Planner as PL
 def start_Sim():
     qs = QS.QuadrupedSim()
     pl = PL.Planner()
-    pl.init_trot_params(0.06, 0.1, 0.1)
+    pl.init_trot_params(0.06, 0.1, 1)
     qs.run(pl)
 
 
