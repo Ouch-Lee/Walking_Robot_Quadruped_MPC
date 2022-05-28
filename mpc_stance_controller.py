@@ -11,7 +11,6 @@ from typing import Any, Sequence, Tuple
 import numpy as np
 import pybullet as p  # pytype: disable=import-error
 
-
 import mpc_osqp as convex_mpc  # pytype: disable=import-error
 
 _FORCE_DIMENSION = 3
