@@ -295,6 +295,18 @@ class QuadrupedSim(object):
             )
         return np.array(foot_positions)
     
+    def GetBaseRollPitchYawRate(self):
+        """Get the rate of orientation change of the minitaur's base in euler angle.
+
+        Returns:
+        rate of (roll, pitch, yaw) change of the minitaur's base.
+        """
+        angular_velocity = p.getBaseVelocity(self.robot)[1]
+        orientation = self.GetTrueBaseOrientation()
+        return self.TransformAngularVelocityToLocalFrame(angular_velocity,
+                                                        orientation)
+                              
+    
     def link_position_in_base_frame( self, link_id ):
         """Computes the link's local position in the robot frame.
         """
