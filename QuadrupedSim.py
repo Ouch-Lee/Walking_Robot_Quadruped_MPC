@@ -78,7 +78,7 @@ class QuadrupedSim(object):
         self.base_orientation = None
         self.velocity_world_frame = 0
         self.com_velocity_body_frame = 0
-
+        self.contact_forces = {}
         # torque control
         self.maxForceId = p.addUserDebugParameter("maxForce", 0, 100, 20)
 
@@ -253,7 +253,7 @@ class QuadrupedSim(object):
         self.base_orientation = p.getBasePositionAndOrientation(self.robot)[1]
 
     ## jiangYH
-     def GetTrueBaseOrientation(self):
+    def GetTrueBaseOrientation(self):
         pos,orn = p.getBasePositionAndOrientation(self.robot)
         return orn
         
@@ -499,14 +499,20 @@ class QuadrupedSim(object):
         return torque
 
     def joint_impedance_controller(self,leg_ID, q_vec, dq_vec, q_d_vec, dq_d_vec):
-        k = [12.5, 12.5, 12.5, 12.5]
-        b = [1.25, 1.25, 1.25, 1.25]
+        if self.foot_contact[leg_ID] == 0:
+            k = [12.5, 12.5, 12.5, 12.5]
+            b = [1.25, 1.25, 1.25, 1.25]
 
-        torque_array = k[leg_ID] * (np.array(q_d_vec) -np.array( q_vec)) + b[leg_ID] * (np.array(dq_d_vec) - np.array(dq_vec))
-        torque_array = list(torque_array)
-        # print("torque:",torque_array)
-        print("--------")
-        return torque_array
+            torque_array = k[leg_ID] * (np.array(q_d_vec) -np.array( q_vec)) + b[leg_ID] * (np.array(dq_d_vec) - np.array(dq_vec))
+            torque_array = list(torque_array)
+            # print("torque:",torque_array)
+            print("--------")
+            return torque_array
+        elif self.foot_contact[leg_ID] == 1:
+            torque_array = self.MapContactForceToJointTorques(leg_ID, self.contact_force)
+            torque_array = list(torque_array)
+            return torque_array
+            
 
 ########################### MPC #######################
 

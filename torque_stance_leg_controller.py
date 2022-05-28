@@ -172,6 +172,7 @@ class TorqueStanceLegController(leg_controller.LegController):
           predicted_contact_forces[i * _FORCE_DIMENSION:(i + 1) *  #  _FORCE_DIMENSION = 3 -> 3*i : 3*(i+1)
                                    _FORCE_DIMENSION])
     # print(contact_forces[0])
+    self._robot.contact_forces = contact_forces
     action = {}
     for leg_id, force in contact_forces.items():
       # While "Lose Contact" is useful in simulation, in real environment it's
