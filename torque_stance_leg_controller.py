@@ -61,7 +61,7 @@ class TorqueStanceLegController(leg_controller.LegController):
       # state_estimator: Any,
       desired_speed: Tuple[float, float] = (0, 0),
       desired_twisting_speed: float = 0,
-      desired_body_height: float = 0.45,
+      desired_body_height: float = 0.3,
       body_mass: float = 9.5,
       body_inertia: Tuple[float, float, float, float, float, float, float,
                           float, float] = (0.07335, 0, 0, 0, 0.25068, 0, 0, 0,
