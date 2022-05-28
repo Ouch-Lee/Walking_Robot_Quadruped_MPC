@@ -37,7 +37,7 @@ class QuadrupedSim(object):
         self.RR_leg = [8, 9, 10]
         self.RL_leg = [12, 13, 14]
 
-        self.body_inertial = 3.3
+        self.body_inertial = 9.5
         self.leg_inertial = [0.54, 0.634, 0.064+0.15] # [abduct, thigh, shank+toe]
 
 
