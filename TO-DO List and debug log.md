@@ -8,6 +8,8 @@
 
     Lab1 机器人的阻尼和摩擦是0; 测试发现mini cheetah也没有阻尼和摩擦
 
+
+
 5.23
 
 * 继续解决电机力矩异常的问题
@@ -29,17 +31,18 @@
 5.24
 
 * 找到每个link对应的ID
-* 
 
-  
 
-  
 
-  
+5.28
+* What we have done:
+  Robot sim
+  State estimator (Directly got from pybullet)
+  Swing controller
+  Stance controller
 
-  
-
-​    
+* What we need to do:
+  Gait
 
 
 
