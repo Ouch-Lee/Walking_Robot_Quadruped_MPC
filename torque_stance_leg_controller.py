@@ -57,8 +57,8 @@ class TorqueStanceLegController(leg_controller.LegController):
   def __init__(
       self,
       robot: Any,
-      gait_generator: Any,
-      state_estimator: Any,
+      # gait_generator: Any,
+      # state_estimator: Any,
       desired_speed: Tuple[float, float] = (0, 0),
       desired_twisting_speed: float = 0,
       desired_body_height: float = 0.45,
@@ -89,8 +89,8 @@ class TorqueStanceLegController(leg_controller.LegController):
       friction_coeffs: The friction coeffs on the contact surfaces.
     """
     self._robot = robot
-    self._gait_generator = gait_generator
-    self._state_estimator = state_estimator
+    # self._gait_generator = gait_generator
+    # self._state_estimator = state_estimator
     self.desired_speed = desired_speed
     self.desired_twisting_speed = desired_twisting_speed
 
@@ -129,8 +129,7 @@ class TorqueStanceLegController(leg_controller.LegController):
         (0., 0., self.desired_twisting_speed), dtype=np.float64)
     foot_contact_state = np.array(
         [(leg_state == 1)
-         for leg_state in self._robot.foot_contact],
-        dtype=np.int32)
+         for leg_state in self._robot.foot_contact])
 
     # We use the body yaw aligned world frame for MPC computation.
     com_roll_pitch_yaw = np.array(self._robot.GetBaseRollPitchYaw(),
