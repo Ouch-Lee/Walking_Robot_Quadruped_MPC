@@ -36,12 +36,17 @@
 
 5.28
 * What we have done:
+
   Robot sim
+  
   State estimator (Directly got from pybullet)
+  
   Swing controller
+  
   Stance controller
 
 * What we need to do:
+
   Gait
 
 
