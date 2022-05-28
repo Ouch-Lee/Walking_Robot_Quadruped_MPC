@@ -24,7 +24,10 @@ class QuadrupedSim(object):
         self.n_j = 12
         self.simu_f = 200
         self.q_vec = np.zeros(self.n_j)
+        self.joints_p = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
         self.dq_vec = np.zeros(self.n_j)
+        self.joints_v = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
+        self.toe_position = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
         self.q_mat = np.zeros((self.simu_f * 3, self.n_j))
         self.q_d_mat = np.zeros((self.simu_f * 3, self.n_j))
 
@@ -196,7 +199,7 @@ class QuadrupedSim(object):
         while times_cnt < 40:
             self.update_base_pos_ori()
             self.update_camera_vision()
-            self.q_vec, self.dq_vec = self.get_joint_states()
+            self.update_joints_p_and_v()
             p.stepSimulation()
             self.plot_mat[:-1, 0] = self.plot_mat[1:, 0]  # update_body position
             self.plot_mat[-1, 0] = self.base_position[2]
@@ -231,7 +234,9 @@ class QuadrupedSim(object):
                 q_4.append([q_list[_i * 3], q_list[_i * 3 + 1], q_list[_i * 3 + 2]])
             torque = self.joint_controller(q_4)
             self.step2(torque)
-            Jacobian = self.ComputeJacobian(0)
+            # self.step(q_4, 0)
+            # p.applyExternalForce(self.robot, -1, (0, -10, 0), (0,0,0), p.LINK_FRAME ) # the force (up,cross, forward)
+            # Jacobian = self.ComputeJacobian(0)
             # if 0 == times_cnt % 20:
             #     self.update_plot()
             time.sleep(1 / self.simu_f )
@@ -260,7 +265,7 @@ class QuadrupedSim(object):
             self.step(q_4, 0)
 
             ## update q and v for joints
-            self.q_vec, self.dq_vec = self.get_joint_states()
+            self.update_joints_p_and_v()
             time.sleep(dt)
             _time_cnt += 1
 
@@ -299,8 +304,16 @@ class QuadrupedSim(object):
         maxForce = p.readUserDebugParameter(self.maxForceId)
         if torque_array is None:
             torque_array = np.zeros(self.n_j)
-        for j in range(12):
-            p.setJointMotorControl2(self.robot, self.joints[j], p.TORQUE_CONTROL, force=torque_array[j], positionGain = 0, velocityGain = 0)
+        p.setJointMotorControlArray(self.robot, jointIndices=self.FR_leg, controlMode=p.TORQUE_CONTROL,
+                                    forces=torque_array[0])  # joints q_ for fr leg
+        p.setJointMotorControlArray(self.robot, jointIndices=self.FL_leg, controlMode=p.TORQUE_CONTROL,
+                                    forces=torque_array[1])
+        p.setJointMotorControlArray(self.robot, jointIndices=self.RR_leg, controlMode=p.TORQUE_CONTROL,
+                                    forces=torque_array[2])
+        p.setJointMotorControlArray(self.robot, jointIndices=self.RL_leg, controlMode=p.TORQUE_CONTROL,
+                                    forces=torque_array[3])
+        # for j in range(12):
+        #     p.setJointMotorControl2(self.robot, self.joints[j], p.TORQUE_CONTROL, force=torque_array[j], positionGain = 0, velocityGain = 0)
 
 
     def step(self, q_d_vec, dq_d_vec):
@@ -314,6 +327,7 @@ class QuadrupedSim(object):
         p.stepSimulation()  # do not need to run in outside loop
         self.update_camera_vision()
         self.update_base_pos_ori()
+        self.update_joints_p_and_v()
         # return None  # TODO
         self.plot_mat[:-1, 0] = self.plot_mat[1:, 0] # update_body position
         self.plot_mat[-1, 0] = self.base_position[2]
@@ -324,13 +338,16 @@ class QuadrupedSim(object):
     def step2(self, torque_array):
         self.set_motor_torque_array(torque_array)
         p.stepSimulation()
+        ## some parmas need to be updated
         self.update_camera_vision()
         self.update_base_pos_ori()
+        self.update_joints_p_and_v()
+        self.get_toes_position()
         self.plot_mat[:-1, 0] = self.plot_mat[1:, 0]  # update_body position
         self.plot_mat[-1, 0] = self.base_position[2]
         self.q_mat[:-1] = self.q_mat[1:]
         self.q_mat[-1] = self.q_vec
-        self.q_vec, self.dq_vec = self.get_joint_states()
+
         # return self.get_joint_states()
 
 
@@ -344,6 +361,19 @@ class QuadrupedSim(object):
         for j in range(12):
             q_vec[j], dq_vec[j], _, _ = p.getJointState(self.robot, self.joints[j])
         return q_vec, dq_vec
+
+    def update_joints_p_and_v(self):
+        self.q_vec, self.dq_vec = self.get_joint_states()
+        for i in range(4):
+            for j in range(3):
+                self.joints_p[i][j] = self.q_vec[3*i + j]
+                self.joints_v[i][j] = self.dq_vec[3*i + j]
+
+
+    def get_toes_position(self):
+        for i in range(4):
+            tmp_list = p.getLinkState(self.robot, self.toe_link_IDs[i])[0]
+            self.toe_position[i] = tmp_list
 
 
     def update_foot_contact_state(self):
@@ -394,24 +424,31 @@ class QuadrupedSim(object):
         :param q_d_vec: target position for each joints, which is 4x3
         :return: virtual torque
         '''
+        torque = []
         q_d_vec_tmp = np.zeros(12)
         for i_ in range(4):
             for j_ in range(3):
                 q_d_vec_tmp[3*i_+j_] = q_d_vec[i_][j_]
-        dq_d_vec = np.r_[q_d_vec_tmp - self.q_vec] * self.simu_f
-        print("target p:", q_d_vec_tmp)
-        print("current p:",self.q_vec)
-        print("target v:",dq_d_vec)
-        print("current v:",self.dq_vec)
+        dq_d_vec = (np.array(q_d_vec) - np.array(self.joints_p)) * self.simu_f
+        # dq_d_vec = np.r_[q_d_vec_tmp - self.q_vec] * self.simu_f
+        # dq_d_vec = q_d_vec - self.joints_p
+        # print("target p:", q_d_vec_tmp)
+        # print("current p:",self.q_vec)
+        # print("target v:",dq_d_vec)
+        # print("current v:",self.dq_vec)
         self.q_d_mat[:-1] = self.q_d_mat[1:]
         self.q_d_mat[-1] = q_d_vec_tmp
-        return self.joint_impedance_controller(self.q_vec, self.dq_vec, q_d_vec_tmp, dq_d_vec)
+        for i in range(4):
+            torque.append(self.joint_impedance_controller(i, self.joints_p[i], self.joints_v[i], q_d_vec[i], dq_d_vec[i]))
+        return torque
 
-    def joint_impedance_controller(self, q_vec, dq_vec, q_d_vec, dq_d_vec):
-        k = 12.5
-        b = 1.25
-        torque_array = k * (q_d_vec - q_vec) + b * (dq_d_vec - dq_vec)
-        print("torque:",torque_array)
+    def joint_impedance_controller(self,leg_ID, q_vec, dq_vec, q_d_vec, dq_d_vec):
+        k = [12.5, 12.5, 12.5, 12.5]
+        b = [1.25, 1.25, 1.25, 1.25]
+
+        torque_array = k[leg_ID] * (np.array(q_d_vec) -np.array( q_vec)) + b[leg_ID] * (np.array(dq_d_vec) - np.array(dq_vec))
+        torque_array = list(torque_array)
+        # print("torque:",torque_array)
         print("--------")
         return torque_array
 
@@ -547,13 +584,29 @@ class Planner:
         :return: a vec3 list (arr)
         """
 
-        t = t % self.T if t > self.T else t  # TODO, strange?
+        t = t % self.T #if t > self.T else t
         x = self.S * (t / self.T - np.sin(2 * np.pi * t / self.T) / (2 * np.pi)) #- self.S / 2
         fE = t / self.T - np.sin(4 * np.pi * t / self.T) / (4 * np.pi)
         z = self.H * (np.sign(self.T / 2 - t) * (2 * fE - 1) + 1)
         y = 0
         return [x, y, z]
 
+    def cal_step(self, current_p, target_p):
+        '''
+        this funciton is used to programming a target trajectory accrooding to current position
+        and target postion for toe
+        param current_p:
+        '''
+        return np.sqrt((target_p[0] - current_p[0])**2 + (target_p[1] - current_p[1])**2)
+
+
+    def trot_swing_realtime_traj(self, t, S, H):
+        t = t % self.T
+        x = S * (t / self.T - np.sin(2 * np.pi * t / self.T) / (2 * np.pi))
+        fE = t / self.T - np.sin(4 * np.pi * t / self.T) / (4 * np.pi)
+        z =H * (np.sign(self.T / 2 - t) * (2 * fE - 1) + 1)
+        y = 0
+        return [x, y, z]
 
     def trot_traj_plan_support(self, t):
         t = t % self.T if t > self.T else t
@@ -599,7 +652,7 @@ if __name__ == '__main__':
     test_dz = []
     t_test = 0
 
-    T = 0.1 # simu step dt = 0.005, so T should higher than 0.2
+    T = 0.08 # simu step dt = 0.005, so T should higher than 0.2
     pl = Planner()
     pl.init_trot_params(0.06, 0.12, T)
     qs.run(pl)
