@@ -269,6 +269,44 @@ class QuadrupedSim(object):
     def update_base_pos_ori(self):
         self.base_position = p.getBasePositionAndOrientation(self.robot)[0]
         self.base_orientation = p.getBasePositionAndOrientation(self.robot)[1]
+    
+    def GetTrueBaseOrientation(self):
+        pos,orn = p.getBasePositionAndOrientation(self.robot)
+        return orn
+        
+    def GetBaseRollPitchYaw(self):
+        """return roll pitch yaw of the base in world frame
+        """
+        orientation = self.GetTrueBaseOrientation()
+        roll_pitch_yaw = p.getEulerFromQuaternion(orientation)
+        return np.asarray(roll_pitch_yaw)
+    
+    def GetFootLinkIDs(self):
+        """Get list of IDs for all foot links."""
+        return self.toe_link_IDs
+    
+    def GetFootPositionsInBaseFrame(self):
+        """Get the robot's foot position in the base frame."""
+        assert len(self._foot_link_ids) == 4
+        foot_positions = []
+        for foot_id in self.GetFootLinkIDs():
+            foot_positions.append(
+            self.link_position_in_base_frame(link_id=foot_id)
+            )
+        return np.array(foot_positions)
+    
+    def link_position_in_base_frame( self, link_id ):
+        """Computes the link's local position in the robot frame.
+        """
+        base_position, base_orientation = p.getBasePositionAndOrientation(self.robot)
+        inverse_translation, inverse_rotation = p.invertTransform(
+            base_position, base_orientation)
+
+        link_state = p.getLinkState(self.robot, link_id)
+        link_position = link_state[0]
+        link_local_position, _ = p.multiplyTransforms(
+            inverse_translation, inverse_rotation, link_position, (0, 0, 0, 1))
+        return np.array(link_local_position)
 
     def init_motor(self):
         maxForce = 0
