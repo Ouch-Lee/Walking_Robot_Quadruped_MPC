@@ -1,10 +1,4 @@
-"""A torque based stance controller framework."""
-
-import os
-import inspect
-currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-parentdir = os.path.dirname(os.path.dirname(currentdir))
-os.sys.path.insert(0, parentdir)
+"""A MPC torque based stance controller framework."""
 
 from typing import Any, Sequence, Tuple
 
@@ -27,7 +21,7 @@ _PLANNING_HORIZON_STEPS = 10
 _PLANNING_TIMESTEP = 0.025
 
 
-class TorqueStanceLegController():
+class MPCStanceController():
   """A torque based stance leg controller framework.
 
   Takes in high level parameters like walking speed and turning speed, and
@@ -101,7 +95,8 @@ class TorqueStanceLegController():
         (0., 0., self.desired_twisting_speed), dtype=np.float64)
     foot_contact_state = np.array(
         [(leg_state == 1)
-         for leg_state in self._robot.foot_contact])
+         for leg_state in self._robot.foot_contact],dtype=np.int64)
+    print(foot_contact_state)
 
     # We use the body yaw aligned world frame for MPC computation.
     com_roll_pitch_yaw = np.array(self._robot.GetBaseRollPitchYaw(),
@@ -129,8 +124,8 @@ class TorqueStanceLegController():
         desired_com_position,  #desired_com_position
         desired_com_velocity,  #desired_com_velocity
         desired_com_roll_pitch_yaw,  #desired_com_roll_pitch_yaw
-        desired_com_angular_velocity  #desired_com_angular_velocity
-    )
+        desired_com_angular_velocity,  #desired_com_angular_velocity
+        )
     p.submitProfileTiming()
 
     contact_forces = {}

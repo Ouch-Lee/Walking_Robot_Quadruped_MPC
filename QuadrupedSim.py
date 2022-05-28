@@ -1,9 +1,11 @@
 import time
+from typing import Sequence
 import pybullet as p
 import pybullet_data as pyd
 import numpy as np
 import matplotlib.pyplot as plt
 import Planner as pl
+import mpc_stance_controller
 
 
 
@@ -77,8 +79,8 @@ class QuadrupedSim(object):
         self.base_position = (0, 0, 0.5)
         self.base_orientation = None
         self.velocity_world_frame = 0
-        self.com_velocity_body_frame = 0
-        self.contact_forces = {}
+        self.com_velocity_body_frame = (0, 0, 0)
+        self.contact_forces = []
         # torque control
         self.maxForceId = p.addUserDebugParameter("maxForce", 0, 100, 20)
 
@@ -169,7 +171,7 @@ class QuadrupedSim(object):
 
 
 
-    def run(self, pl):
+    def run(self, pl, controller):
         dt = 1 / self.simu_f
         simulation_times = 5000
         times_cnt = 0
@@ -191,6 +193,7 @@ class QuadrupedSim(object):
 
         self.stand_up(dt, pl)
         self.init_motor()
+
         while times_cnt < simulation_times:
             t = t + dt
             self.update_camera_vision()
@@ -211,13 +214,18 @@ class QuadrupedSim(object):
             q_4 = []
             for _i in range(4):
                 q_4.append([q_list[_i * 3], q_list[_i * 3 + 1], q_list[_i * 3 + 2]])
+            controller.update(times_cnt)
+            self.contact_forces = controller.get_contact_forces()
             torque = self.joint_controller(q_4)
             self.step2(torque)
             # self.step(q_4, 0)
-            # p.applyExternalForce(self.robot, -1, (0, -10, 0), (0,0,0), p.LINK_FRAME ) # the force (up,cross, forward)
+            if  300< times_cnt <350 :
+                p.applyExternalForce(self.robot, -1, (0, -50, 0), (0,0,0), p.LINK_FRAME ) # the force (up,cross, forward)
             # Jacobian = self.ComputeJacobian(0)
             # if 0 == times_cnt % 20:
             #     self.update_plot()
+            times_cnt += 1
+    
             time.sleep(1 / self.simu_f )
 
 
@@ -270,7 +278,7 @@ class QuadrupedSim(object):
     
     def GetFootPositionsInBaseFrame(self):
         """Get the robot's foot position in the base frame."""
-        assert len(self._foot_link_ids) == 4
+        # assert len(self._foot_link_ids) == 4
         foot_positions = []
         for foot_id in self.GetFootLinkIDs():
             foot_positions.append(
@@ -288,7 +296,39 @@ class QuadrupedSim(object):
         orientation = self.GetTrueBaseOrientation()
         return self.TransformAngularVelocityToLocalFrame(angular_velocity,
                                                         orientation)
-                              
+
+    def TransformAngularVelocityToLocalFrame(self, angular_velocity, orientation):
+        """Transform the angular velocity from world frame to robot's frame.
+
+        Args:
+        angular_velocity: Angular velocity of the robot in world frame.
+        orientation: Orientation of the robot represented as a quaternion.
+
+        Returns:
+        angular velocity of based on the given orientation.
+        """
+        # Treat angular velocity as a position vector, then transform based on the
+        # orientation given by dividing (or multiplying with inverse).
+        # Get inverse quaternion assuming the vector is at 0,0,0 origin.
+        _, orientation_inversed = p.invertTransform([0, 0, 0],
+                                                                        orientation)
+        # Transform the angular_velocity at neutral orientation using a neutral
+        # translation and reverse of the given orientation.
+        relative_velocity, _ = p.multiplyTransforms(
+            [0, 0, 0], orientation_inversed, angular_velocity,
+            p.getQuaternionFromEuler([0, 0, 0]))
+        return np.asarray(relative_velocity)
+        
+    def GetBaseRollPitchYawRate(self):
+        """Get the rate of orientation change of the minitaur's base in euler angle.
+
+        Returns:
+        rate of (roll, pitch, yaw) change of the minitaur's base.
+        """
+        angular_velocity = p.getBaseVelocity(self.robot)[1]
+        orientation = self.GetTrueBaseOrientation()
+        return self.TransformAngularVelocityToLocalFrame(angular_velocity,
+                                                        orientation)                         
     
     def link_position_in_base_frame( self, link_id ):
         """Computes the link's local position in the robot frame.
@@ -325,9 +365,9 @@ class QuadrupedSim(object):
         velocity_world_frame = self.GetBaseVelocity()
         orientation = self.GetTrueBaseOrientation()
         _, orientation_inversed = p.invertTransform([0, 0, 0], orientation)
-        self.com_velocity_body_frame = p.multiplyTransforms(
+        self.com_velocity_body_frame,_ = (p.multiplyTransforms(
             [0, 0, 0], orientation_inversed, velocity_world_frame,
-            p.getQuaternionFromEuler([0, 0, 0]))
+            p.getQuaternionFromEuler([0, 0, 0])))
         return self.com_velocity_body_frame
 
     def init_motor(self):
@@ -480,7 +520,7 @@ class QuadrupedSim(object):
         :param q_d_vec: target position for each joints, which is 4x3
         :return: virtual torque
         '''
-        torque = []
+        torque_array = []
         q_d_vec_tmp = np.zeros(12)
         for i_ in range(4):
             for j_ in range(3):
@@ -495,23 +535,23 @@ class QuadrupedSim(object):
         self.q_d_mat[:-1] = self.q_d_mat[1:]
         self.q_d_mat[-1] = q_d_vec_tmp
         for i in range(4):
-            torque.append(self.joint_impedance_controller(i, self.joints_p[i], self.joints_v[i], q_d_vec[i], dq_d_vec[i]))
-        return torque
+            torque_array.append(self.joint_impedance_controller(i, self.joints_p[i], self.joints_v[i], q_d_vec[i], dq_d_vec[i]))
+        return torque_array
 
-    def joint_impedance_controller(self,leg_ID, q_vec, dq_vec, q_d_vec, dq_d_vec):
+    def joint_impedance_controller(self, leg_ID, q_vec, dq_vec, q_d_vec, dq_d_vec):
         if self.foot_contact[leg_ID] == 0:
             k = [12.5, 12.5, 12.5, 12.5]
             b = [1.25, 1.25, 1.25, 1.25]
 
-            torque_array = k[leg_ID] * (np.array(q_d_vec) -np.array( q_vec)) + b[leg_ID] * (np.array(dq_d_vec) - np.array(dq_vec))
-            torque_array = list(torque_array)
+            torque = k[leg_ID] * (np.array(q_d_vec) -np.array( q_vec)) + b[leg_ID] * (np.array(dq_d_vec) - np.array(dq_vec))
+            torque = list(torque)
             # print("torque:",torque_array)
             print("--------")
-            return torque_array
+            return torque
         elif self.foot_contact[leg_ID] == 1:
-            torque_array = self.MapContactForceToJointTorques(leg_ID, self.contact_force)
-            torque_array = list(torque_array)
-            return torque_array
+            torque = self.MapContactForceToJointTorques(leg_ID, self.contact_forces[leg_ID])
+            torque = list(torque)
+            return torque
             
 
 ########################### MPC #######################
