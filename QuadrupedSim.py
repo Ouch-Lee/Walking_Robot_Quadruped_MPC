@@ -4,7 +4,7 @@ import pybullet_data as pyd
 import numpy as np
 import matplotlib.pyplot as plt
 import Planner as pl
-
+from typing import Any, Sequence
 
 
 class QuadrupedSim(object):
@@ -74,7 +74,8 @@ class QuadrupedSim(object):
         if start_sim: p.stepSimulation()
         self.base_position = (0,0,0.5)
         self.base_orientation = None
-
+        self.velocity_world_frame = 0
+        self.com_velocity_body_frame = 0
         # torque control
         self.K = p.addUserDebugParameter('K', 0, 15, 10)
         self.B = p.addUserDebugParameter('B', 0, 2, 1.25)
@@ -319,7 +320,34 @@ class QuadrupedSim(object):
         link_local_position, _ = p.multiplyTransforms(
             inverse_translation, inverse_rotation, link_position, (0, 0, 0, 1))
         return np.array(link_local_position)
+    
+    def GetBaseVelocity(self):
+        """Get the linear velocity of minitaur's base.
 
+        Returns:
+        The velocity of minitaur's base.
+        """
+        velocity, _ = p.getBaseVelocity(self.robot)
+        self.velocity_world_frame = velocity
+        return velocity
+    
+    def com_velocity_body_frame(self) -> Sequence[float]:
+        """The base velocity projected in the body aligned inertial frame.
+
+        The body aligned frame is a intertia frame that coincides with the body
+        frame, but has a zero relative velocity/angular velocity to the world frame.
+
+        Returns:
+        The com velocity in body aligned frame.
+        """
+        velocity_world_frame = self.GetBaseVelocity()
+        orientation = self.GetTrueBaseOrientation()
+        _, orientation_inversed = p.invertTransform([0, 0, 0], orientation)
+        self.com_velocity_body_frame = p.multiplyTransforms(
+            [0, 0, 0], orientation_inversed, velocity_world_frame,
+            p.getQuaternionFromEuler([0, 0, 0]))
+        return self.com_velocity_body_frame
+    
     def init_motor(self):
         maxForce = 0
         mode = p.VELOCITY_CONTROL

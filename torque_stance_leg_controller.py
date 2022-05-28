@@ -128,9 +128,8 @@ class TorqueStanceLegController(leg_controller.LegController):
     desired_com_angular_velocity = np.array(
         (0., 0., self.desired_twisting_speed), dtype=np.float64)
     foot_contact_state = np.array(
-        [(leg_state in (gait_generator_lib.LegState.STANCE,
-                        gait_generator_lib.LegState.EARLY_CONTACT))
-         for leg_state in self._gait_generator.desired_leg_state],
+        [(leg_state == 1)
+         for leg_state in self._robot.foot_contact],
         dtype=np.int32)
 
     # We use the body yaw aligned world frame for MPC computation.
@@ -145,7 +144,7 @@ class TorqueStanceLegController(leg_controller.LegController):
     p.submitProfileTiming("predicted_contact_forces")
     predicted_contact_forces = self._cpp_mpc.compute_contact_forces(
         [0],  #com_position
-        np.asarray(self._state_estimator.com_velocity_body_frame,
+        np.asarray(self._robot.com_velocity_body_frame,
                    dtype=np.float64),  #com_velocity
         np.array(com_roll_pitch_yaw, dtype=np.float64),  #com_roll_pitch_yaw
         # Angular velocity in the yaw aligned world frame is actually different
