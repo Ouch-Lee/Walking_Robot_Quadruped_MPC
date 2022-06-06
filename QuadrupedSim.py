@@ -1,3 +1,4 @@
+import random
 import time
 from typing import Sequence
 import pybullet as p
@@ -10,22 +11,42 @@ import mpc_stance_controller
 
 
 class QuadrupedSim(object):
-    def __init__(self, set_color=True, set_sliders=False, set_cameras=True, start_sim=False):
+    def __init__(self, set_color=True, set_sliders=False, set_cameras=True, start_sim=False,  set_Floor=False):
         self.physicsClient = p.connect(p.GUI)  # connect to simulation server, the return value is a client ID
         # set visualization angle, pitch is up/down, yaw is right/left
         # self.camera_focus = [0, 0, 0.3] # could change this to move camera
-        p.resetDebugVisualizerCamera(cameraDistance=1, cameraYaw=0,
-                                     cameraPitch=0, cameraTargetPosition=[0, 0, 0.3])
+        p.resetDebugVisualizerCamera(cameraDistance=3,
+                                cameraYaw=60,
+                                cameraPitch=-3,
+                                cameraTargetPosition=[0, 0, 0.6])
         p.setGravity(0, 0, -9.8)  # the fall down performance is a little strange?
         p.setAdditionalSearchPath(pyd.getDataPath())
-        self.floor = p.loadURDF('plane.urdf')
+        heightPerturbationRange = 0.01
+        if set_Floor:
+            self.floor = p.loadURDF('plane.urdf')
+        else:
+            numHeightfieldRows = 256
+            numHeightfieldColumns = 256
+            heightfieldData = [0]*numHeightfieldRows*numHeightfieldColumns 
+            for j in range (int(numHeightfieldColumns/2)):
+                for i in range (int(numHeightfieldRows/2) ):
+                    height = random.uniform(0,heightPerturbationRange)
+                    heightfieldData[2*i+2*j*numHeightfieldRows]=height
+                    heightfieldData[2*i+1+2*j*numHeightfieldRows]=height
+                    heightfieldData[2*i+(2*j+1)*numHeightfieldRows]=height
+                    heightfieldData[2*i+1+(2*j+1)*numHeightfieldRows]=height               
+            terrainShape = p.createCollisionShape(shapeType = p.GEOM_HEIGHTFIELD, meshScale=[.05,.05,1], heightfieldTextureScaling=(numHeightfieldRows-1)/2, heightfieldData=heightfieldData, numHeightfieldRows=numHeightfieldRows, numHeightfieldColumns=numHeightfieldColumns)
+            ground_id  = p.createMultiBody(0, terrainShape)
+            self.floor = terrainShape
+
+
         startPos = [0, 0, 0.2]  # float and fixed in air
         # self.robot = p.loadURDF('mini_cheetah/mini_cheetah.urdf', startPos)
         self.robot = p.loadURDF('mini_cheetah2.urdf', startPos)
 
         self.n_j = 12
         self.simu_f = 200
-        self.q_vec = np.zeros(self.n_j)
+        self.q_vec = np.zeros((1,self.n_j))
         self.joints_p = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
         self.dq_vec = np.zeros(self.n_j)
         self.joints_v = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]
@@ -81,6 +102,8 @@ class QuadrupedSim(object):
         self.velocity_world_frame = 0
         self.com_velocity_body_frame = (0, 0, 0)
         self.contact_forces = []
+        self.contact_foot_position = []
+        self._motor_direction=np.ones(12)
         # torque control
         self.maxForceId = p.addUserDebugParameter("maxForce", 0, 100, 20)
 
@@ -100,15 +123,15 @@ class QuadrupedSim(object):
         pass  # add something more?
 
     def add_camera_sliders(self):
-        self.camera_sliders.append(p.addUserDebugParameter('pitch', 180, 360, 180))
-        self.camera_sliders.append(p.addUserDebugParameter('yaw', 0, 360, 180))
-        self.camera_sliders.append(p.addUserDebugParameter('distance', 0, 5, 1))
+        # self.camera_sliders.append(p.addUserDebugParameter('pitch', 180, 360, 180))
+        # self.camera_sliders.append(p.addUserDebugParameter('yaw', 0, 360, 180))
+        self.camera_sliders.append(p.addUserDebugParameter('distance', 0, 7, 3))
 
     def update_camera_vision(self):
-        p.resetDebugVisualizerCamera(cameraDistance=p.readUserDebugParameter(self.camera_sliders[2]),
-                                     cameraYaw=p.readUserDebugParameter(self.camera_sliders[1]),
-                                     cameraPitch=p.readUserDebugParameter(self.camera_sliders[0]),
-                                     cameraTargetPosition=[0, 0, 0.3])
+        p.resetDebugVisualizerCamera(cameraDistance=p.readUserDebugParameter(self.camera_sliders[0]),
+                                     cameraYaw=60,
+                                     cameraPitch=-3,
+                                     cameraTargetPosition=[self.base_position[0], self.base_position[1], 0.6])
 
     # def init_sim_states(self):
     #     for _i in range(4):
@@ -201,6 +224,10 @@ class QuadrupedSim(object):
             [support_x, y2, support_z] = pl.trot_traj_plan_support(t)
             # change phase when a period T has passed, start with fl and hr to be swing phase
             phase = t // pl.T % 2
+            # fl_hr_x = swing_x if self.foot_contact[0] == 0 or self.foot_contact[3] == 0 else support_x
+            # fl_hr_z = swing_z if self.foot_contact[0] == 0 or self.foot_contact[3] == 0 else support_z
+            # fr_hl_x = support_x if self.foot_contact[1] == 1 or self.foot_contact[2] == 1 else swing_x
+            # fr_hl_z = support_z if self.foot_contact[1] == 1 or self.foot_contact[2] == 1 else swing_z
             fl_hr_x = swing_x if phase == 0 else support_x
             fl_hr_z = swing_z if phase == 0 else support_z
             fr_hl_x = support_x if phase == 0 else swing_x
@@ -214,18 +241,17 @@ class QuadrupedSim(object):
             q_4 = []
             for _i in range(4):
                 q_4.append([q_list[_i * 3], q_list[_i * 3 + 1], q_list[_i * 3 + 2]])
-            controller.update(times_cnt)
+            
             self.contact_forces = controller.get_contact_forces()
             torque = self.joint_controller(q_4)
+            self.update_foot_contact_state()
             self.step2(torque)
+
             # self.step(q_4, 0)
-            if  300< times_cnt <350 :
-                p.applyExternalForce(self.robot, -1, (0, -50, 0), (0,0,0), p.LINK_FRAME ) # the force (up,cross, forward)
+            # p.applyExternalForce(self.robot, -1, (0, -10, 0), (0,0,0), p.LINK_FRAME ) # the force (up,cross, forward)
             # Jacobian = self.ComputeJacobian(0)
             # if 0 == times_cnt % 20:
             #     self.update_plot()
-            times_cnt += 1
-    
             time.sleep(1 / self.simu_f )
 
 
@@ -278,7 +304,7 @@ class QuadrupedSim(object):
     
     def GetFootPositionsInBaseFrame(self):
         """Get the robot's foot position in the base frame."""
-        # assert len(self._foot_link_ids) == 4
+        assert len(self.toe_link_IDs) == 4
         foot_positions = []
         for foot_id in self.GetFootLinkIDs():
             foot_positions.append(
@@ -365,9 +391,9 @@ class QuadrupedSim(object):
         velocity_world_frame = self.GetBaseVelocity()
         orientation = self.GetTrueBaseOrientation()
         _, orientation_inversed = p.invertTransform([0, 0, 0], orientation)
-        self.com_velocity_body_frame,_ = (p.multiplyTransforms(
+        self.com_velocity_body_frame = p.multiplyTransforms(
             [0, 0, 0], orientation_inversed, velocity_world_frame,
-            p.getQuaternionFromEuler([0, 0, 0])))
+            p.getQuaternionFromEuler([0, 0, 0]))
         return self.com_velocity_body_frame
 
     def init_motor(self):
@@ -478,14 +504,22 @@ class QuadrupedSim(object):
         Body 0: plane;
         Body 1: robot
         """
+        foot_contact_test = [0,0,0,0]
+        self.foot_contact = [0,0,0,0]
+        for cp in p.getContactPoints(self.robot):
+            print(cp)
+            #self.foot_contact[cp[3]//4] = 1
 
-        for cp in p.getContactPoints(0, 1):
-            if cp[4] in self.toe_link_IDs:
-                self.foot_contact[cp[4] // 4] = 1
-                # p.addUserDebugText('%s: %d' % (foot_name_list[cp[4] % 4], 1), p.getLinkState(self.robot, cp[4])[0], lifeTime=0.1)
-            else:
-                self.foot_contact[cp[4] // 4] = 0
-
+            #print(self.toe_link_IDs)
+            if cp[3] in self.toe_link_IDs:
+                self.foot_contact[cp[3] // 4] = 1
+            # foot_contact_test[cp[3] // 4] = 1
+            #self.foot_contact[cp[3] // 4] = 1
+                #p.addUserDebugText('%s: %d' % (foot_name_list[cp[4] % 4], 1), p.getLinkState(self.robot, cp[4])[0], lifeTime=0.1)
+            # else:
+            #     self.foot_contact[cp[3] // 4] = 0
+            # foot_contact_test[cp[3] // 4] = 0
+            print(self.foot_contact)
     def finite_state_controller(self):
         """
         change between stance and swing states
@@ -541,14 +575,18 @@ class QuadrupedSim(object):
     def joint_impedance_controller(self, leg_ID, q_vec, dq_vec, q_d_vec, dq_d_vec):
         if self.foot_contact[leg_ID] == 0:
             k = [12.5, 12.5, 12.5, 12.5]
-            b = [1.25, 1.25, 1.25, 1.25]
+            b = [0.5, 0.5, 0.5, 0.5]
 
             torque = k[leg_ID] * (np.array(q_d_vec) -np.array( q_vec)) + b[leg_ID] * (np.array(dq_d_vec) - np.array(dq_vec))
             torque = list(torque)
             # print("torque:",torque_array)
-            print("--------")
+            #print(leg_ID)
             return torque
         elif self.foot_contact[leg_ID] == 1:
+            print(leg_ID)
+            #self.get_toes_position()
+            #self.contact_foot_position.append(self.toe_position[leg_ID])
+            #print(self.contact_foot_position)
             torque = self.MapContactForceToJointTorques(leg_ID, self.contact_forces[leg_ID])
             torque = list(torque)
             return torque
@@ -570,11 +608,14 @@ class QuadrupedSim(object):
           extracted with indices [6 + leg_id * 3: 6 + leg_id * 3 + 3].
         """
         all_joint_angles = self.q_vec
+        print(self.q_vec.shape)
+        all_joint_angles = all_joint_angles.tolist()
         zero_vec = [0] * len(all_joint_angles)
         # it's different from discirbtion in guide
-        jv, _ = p.calculateJacobian(robot, link_id,
-                                                       (0, 0, 0), all_joint_angles,
-                                                       zero_vec, zero_vec)
+        print("debug1")
+        print(robot)
+        jv, _ = p.calculateJacobian(robot, link_id,(0, 0, 0), all_joint_angles,zero_vec, zero_vec)
+        print("debug2")
         jacobian = np.array(jv)
         assert jacobian.shape[0] == 3
         print('the Jacobian Matrix:')
@@ -595,7 +636,7 @@ class QuadrupedSim(object):
         jv = self.ComputeJacobian(leg_id)  # 计算目标控制腿的雅可比矩阵
         all_motor_torques = np.matmul(contact_force, jv)  # 是不是少了一个R？
         motor_torques = {}
-        motors_per_leg = self.num_motors // self.num_legs
+        motors_per_leg = 3
         # 将计算得到的力矩传给关节
         com_dof = 6
         for joint_id in range(leg_id * motors_per_leg,

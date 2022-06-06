@@ -1,4 +1,10 @@
-"""A MPC torque based stance controller framework."""
+"""A torque based stance controller framework."""
+
+import os
+import inspect
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(os.path.dirname(currentdir))
+os.sys.path.insert(0, parentdir)
 
 from typing import Any, Sequence, Tuple
 
@@ -21,7 +27,7 @@ _PLANNING_HORIZON_STEPS = 10
 _PLANNING_TIMESTEP = 0.025
 
 
-class MPCStanceController():
+class TorqueStanceLegController():
   """A torque based stance leg controller framework.
 
   Takes in high level parameters like walking speed and turning speed, and
@@ -68,6 +74,7 @@ class MPCStanceController():
     self._friction_coeffs = np.array(friction_coeffs)
     body_inertia_list = list(body_inertia)
     weights_list = list(_MPC_WEIGHTS)
+    self.footposition = []
     self._cpp_mpc = convex_mpc.ConvexMpc(
         body_mass,
         body_inertia_list,
@@ -86,6 +93,7 @@ class MPCStanceController():
 
   def get_contact_forces(self):
     """Computes the torque for stance legs."""
+    self.footposition = []
     desired_com_position = np.array((0., 0., self._desired_body_height),
                                     dtype=np.float64)
     desired_com_velocity = np.array(
@@ -95,9 +103,9 @@ class MPCStanceController():
         (0., 0., self.desired_twisting_speed), dtype=np.float64)
     foot_contact_state = np.array(
         [(leg_state == 1)
-         for leg_state in self._robot.foot_contact],dtype=np.int64)
+         for leg_state in self._robot.foot_contact],np.int32)
     print(foot_contact_state)
-
+    #print(self.footposition)
     # We use the body yaw aligned world frame for MPC computation.
     com_roll_pitch_yaw = np.array(self._robot.GetBaseRollPitchYaw(),
                                   dtype=np.float64)
@@ -108,6 +116,7 @@ class MPCStanceController():
     # print("Com RPY: {}".format(self._robot.GetBaseRollPitchYawRate()))
     # print("Com RPY Rate: {}".format(self._robot.GetBaseRollPitchYawRate()))
     p.submitProfileTiming("predicted_contact_forces")
+    #print(foot_contact_state)
     predicted_contact_forces = self._cpp_mpc.compute_contact_forces(
         [0],  #com_position
         np.asarray(self._robot.com_velocity_body_frame,
@@ -124,8 +133,8 @@ class MPCStanceController():
         desired_com_position,  #desired_com_position
         desired_com_velocity,  #desired_com_velocity
         desired_com_roll_pitch_yaw,  #desired_com_roll_pitch_yaw
-        desired_com_angular_velocity,  #desired_com_angular_velocity
-        )
+        desired_com_angular_velocity  #desired_com_angular_velocity
+    )
     p.submitProfileTiming()
 
     contact_forces = {}
